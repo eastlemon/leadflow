@@ -124,3 +124,44 @@ it('matches whitelist by prefix', function (): void {
     expect($this->detector->isAllowedByWhiteList('7707083894', $list))->toBeTrue();
     expect($this->detector->isAllowedByWhiteList('9999999999', $list))->toBeFalse();
 });
+
+it('validateResolved flags fields whose value does not pass validation', function (): void {
+    // Column positions resolved by detect() must point at cells that
+    // actually pass validation — not just any non-empty cell.
+    $row = [
+        'inn'   => 'NOT_AN_INN',
+        'phone' => '12',          // too short
+        'okved' => '6.0',         // wrong format
+    ];
+    $mapping = $this->detector->detect([]) === ['inn' => null, 'tel' => null, 'okved' => null]
+        ? ['inn' => 'inn', 'tel' => 'phone', 'okved' => 'okved']
+        : $this->detector->detect($row);
+
+    // detect() with this row would map okved to 'okved' too (it's the
+    // only cell with 6.0-like length), so we override the mapping here.
+    $errors = $this->detector->validateResolved($row, [
+        'inn'   => 'inn',
+        'tel'   => 'phone',
+        'okved' => 'okved',
+    ]);
+    expect($errors)->toContain('inn');
+    expect($errors)->toContain('tel');
+    expect($errors)->toContain('okved');
+});
+
+it('validateResolved returns empty when mapping values all validate', function (): void {
+    $row = [
+        'inn'   => '7707083893',
+        'phone' => '+7 495 000-00-00',
+        'okved' => '62.01',
+    ];
+    expect($this->detector->validateResolved($row, [
+        'inn' => 'inn', 'tel' => 'phone', 'okved' => 'okved',
+    ]))->toBe([]);
+});
+
+it('validateResolved skips fields that the mapping points to as null', function (): void {
+    expect($this->detector->validateResolved(['x' => 'irrelevant'], [
+        'inn' => null, 'tel' => null, 'okved' => null,
+    ]))->toBe([]);
+});

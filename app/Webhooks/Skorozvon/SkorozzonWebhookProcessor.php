@@ -8,6 +8,8 @@ use App\Adapters\AdapterRegistry;
 use App\Data\LeadData;
 use App\Jobs\ScoreLeadJob;
 use App\Models\Lead;
+use App\Services\KeyDetector;
+use Illuminate\Support\Facades\Log;
 use Spatie\WebhookClient\Models\WebhookCall;
 use Spatie\WebhookClient\Jobs\ProcessWebhookJob;
 
@@ -27,9 +29,26 @@ class SkorozzonWebhookProcessor extends ProcessWebhookJob
         /** @var array<string, mixed> $payload */
         $payload = $this->webhookCall->payload;
 
+        $inn = (string) ($payload['inn'] ?? '');
+        if (! app(KeyDetector::class)->validInn($inn)) {
+            Log::warning('SkorozzonWebhookProcessor: dropping payload with invalid INN', [
+                'inn' => $inn,
+                'id'  => $this->webhookCall->id,
+            ]);
+            return; // tell Spatie the call is processed so it doesn't retry
+        }
+
+        $phone = $payload['phone'] ?? null;
+        if ($phone !== null && ! app(KeyDetector::class)->validPhone((string) $phone)) {
+            Log::info('SkorozzonWebhookProcessor: dropping invalid phone, keeping lead', [
+                'phone' => $phone,
+            ]);
+            $phone = null;
+        }
+
         $lead = Lead::create([
-            'inn'          => (string) ($payload['inn'] ?? ''),
-            'phone'        => $payload['phone']   ?? null,
+            'inn'          => $inn,
+            'phone'        => $phone,
             'email'        => $payload['email']   ?? null,
             'first_name'   => $payload['first_name']  ?? null,
             'last_name'    => $payload['last_name']   ?? null,

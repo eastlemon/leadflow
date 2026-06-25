@@ -69,6 +69,61 @@ class KeyDetector
     }
 
     /**
+     * Re-validate the resolved field values from a row.
+     *
+     * `detect()` finds which columns hold inn/tel/okved. This second pass
+     * confirms the actual cell contents pass our validators. Without it
+     * a column named "INN" but containing 'some text' would slip through
+     * into Lead::create() — exactly what TellFaxHelper::getKeys was
+     * guarding against in the Yii2 code.
+     *
+     * Returns the list of fields that failed validation; empty list = OK.
+     *
+     * @param  array<string, string>  $row
+     * @param  array<string, int|string|null>  $mapping  output of detect()
+     * @return list<string>
+     */
+    public function validateResolved(array $row, array $mapping): array
+    {
+        $errors = [];
+
+        $inn = $this->resolve($row, $mapping, 'inn');
+        if ($inn !== null && ! $this->validInn($inn)) {
+            $errors[] = 'inn';
+        }
+
+        $tel = $this->resolve($row, $mapping, 'tel');
+        if ($tel !== null && ! $this->validPhone($tel)) {
+            $errors[] = 'tel';
+        }
+
+        $okved = $this->resolve($row, $mapping, 'okved');
+        if ($okved !== null && ! $this->validOkved($okved)) {
+            $errors[] = 'okved';
+        }
+
+        return $errors;
+    }
+
+    /**
+     * @param  array<string, string>  $row
+     * @param  array<string, int|string|null>  $mapping
+     */
+    private function resolve(array $row, array $mapping, string $field): ?string
+    {
+        $key = $mapping[$field] ?? null;
+        if ($key === null) {
+            return null;
+        }
+        $value = $row[$key] ?? null;
+        if ($value === null || $value === '') {
+            return null;
+        }
+
+        return (string) $value;
+    }
+
+    /**
      * ИНН checksum (10 digits — юрлица, 12 — физлица/ИП).
      * Coefficients are pre-computed per Russian tax rules.
      */

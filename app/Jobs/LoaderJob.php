@@ -58,20 +58,42 @@ class LoaderJob implements ShouldQueue
 
         $count = 0;
         $skipped = 0;
+        $invalid = 0;
         try {
             foreach ($reader->rows($absolute) as $row) {
                 $mapping = $detected ?? $detector->detect($row);
+
+                // Confirm the resolved cell values actually pass validation.
+                // A column named "INN" can still hold garbage.
+                $badFields = $detector->validateResolved($row, $mapping);
 
                 $inn = $this->pull($row, $mapping, 'inn');
                 if ($inn === null) {
                     $skipped++;
                     continue; // no INN → not a valid lead, skip silently
                 }
+                if (in_array('inn', $badFields, true)) {
+                    $invalid++;
+                    Log::warning('LoaderJob: row with invalid INN, dropped', [
+                        'file_id' => $file->id,
+                        'inn'     => $inn,
+                    ]);
+                    continue;
+                }
+
+                $phone = $this->pull($row, $mapping, 'tel');
+                if ($phone !== null && in_array('tel', $badFields, true)) {
+                    Log::warning('LoaderJob: row with invalid phone, kept (inn still valid)', [
+                        'file_id' => $file->id,
+                        'phone'   => $phone,
+                    ]);
+                    $phone = null;
+                }
 
                 $lead = Lead::create([
                     'user_id'      => $file->user_id,
                     'inn'          => $inn,
-                    'phone'        => $this->pull($row, $mapping, 'tel'),
+                    'phone'        => $phone,
                     'okved'        => $this->pull($row, $mapping, 'okved'),
                     'email'        => $row['email'] ?? null,
                     'first_name'   => $row['first_name'] ?? $row['name'] ?? null,
@@ -96,6 +118,7 @@ class LoaderJob implements ShouldQueue
                 'file_id' => $file->id,
                 'rows'    => $count,
                 'skipped' => $skipped,
+                'invalid' => $invalid,
             ]);
         } catch (Throwable $e) {
             Log::error('LoaderJob: failed', [
