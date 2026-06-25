@@ -15,7 +15,7 @@ class Lead extends Model
     protected $table = 'leads';
 
     protected $fillable = [
-        'inn', 'phone', 'email',
+        'user_id', 'inn', 'phone', 'email',
         'first_name', 'last_name', 'middle_name',
         'company_name', 'city', 'region', 'okved',
         'extra', 'source',
@@ -28,5 +28,10 @@ class Lead extends Model
     public function jobs(): HasMany
     {
         return $this->hasMany(LeadJob::class);
+    }
+
+    public function user(): \Illuminate\Database\Eloquent\Relations\BelongsTo
+    {
+        return $this->belongsTo(User::class);
     }
 }

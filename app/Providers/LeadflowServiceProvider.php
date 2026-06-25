@@ -16,12 +16,8 @@ class LeadflowServiceProvider extends ServiceProvider
         $this->app->singleton(ConfigFactory::class);
 
         $this->app->singleton(AdapterRegistry::class, function (Application $app) {
-            /** @var array<string, array<string, mixed>> $settings */
-            $settings = (array) config('leadflow.banks', []);
-
             return new AdapterRegistry(
                 $app->make(ConfigFactory::class),
-                $settings,
             );
         });
     }

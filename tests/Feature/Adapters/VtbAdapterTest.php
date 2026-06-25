@@ -10,12 +10,11 @@ use Illuminate\Support\Facades\Http;
 
 beforeEach(function (): void {
     app()->singleton(AdapterRegistry::class, function () {
-        return new class extends AdapterRegistry {
-            public function __construct() {}
-            public function get(string $systemName): \App\Adapters\Contracts\BankAdapter
+        return new class(app(\App\Adapters\ConfigFactory::class)) extends AdapterRegistry {
+            public function get(string $systemName, array $settings = []): \App\Adapters\Contracts\BankAdapter
             {
                 if ($systemName !== 'vtb') {
-                    return parent::get($systemName);
+                    return parent::get($systemName, $settings);
                 }
                 return new VtbAdapter(new VtbConfig(
                     apiUrl: 'https://gw.api.vtb.ru',

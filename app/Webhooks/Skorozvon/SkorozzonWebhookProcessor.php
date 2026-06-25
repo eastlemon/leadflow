@@ -40,11 +40,43 @@ class SkorozzonWebhookProcessor extends ProcessWebhookJob
             'okved'        => $payload['okved']   ?? null,
             'extra'        => $payload,
             'source'       => 'skorozvon',
+            'user_id'      => $this->resolveUserId($payload),
         ]);
 
         $registry = app(AdapterRegistry::class);
-        foreach (array_keys($registry->available()) as $systemName) {
-            ScoreLeadJob::dispatch($lead->id, $systemName);
+        if ($lead->user_id !== null) {
+            // Multi-user fan-out: only banks this user actually has an active connection for.
+            foreach (array_keys($registry->allForUser($lead->user_id)) as $systemName) {
+                ScoreLeadJob::dispatch($lead->id, $systemName);
+            }
+        } else {
+            // No user attached — fall back to the global bank list (admin/system-level connects).
+            foreach (array_keys($registry->available()) as $systemName) {
+                ScoreLeadJob::dispatch($lead->id, $systemName);
+            }
         }
+    }
+
+    /**
+     * Best-effort user resolution from the payload.
+     * Скорозвон usually passes either `user_id`, `user_email`, or the call's `client_id`.
+     *
+     * @param array<string, mixed> $payload
+     */
+    private function resolveUserId(array $payload): ?int
+    {
+        if (isset($payload['user_id']) && is_numeric($payload['user_id'])) {
+            return (int) $payload['user_id'];
+        }
+
+        $email = $payload['user_email'] ?? $payload['client_email'] ?? null;
+        if (is_string($email) && $email !== '') {
+            $user = \App\Models\User::query()->where('email', $email)->first();
+            if ($user) {
+                return $user->id;
+            }
+        }
+
+        return null;
     }
 }

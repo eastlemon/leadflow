@@ -47,6 +47,20 @@ class ScoreLeadJob implements ShouldQueue
             return;
         }
 
+        $adapter = $lead->user_id
+            ? $registry->getForUser($lead->user_id, $this->systemName)
+            : null;
+
+        if (! $adapter) {
+            Log::info('ScoreLeadJob: user has no active connection, skipping', [
+                'lead_id'     => $lead->id,
+                'system_name' => $this->systemName,
+                'user_id'     => $lead->user_id,
+            ]);
+
+            return;
+        }
+
         $job = LeadJob::create([
             'lead_id'     => $lead->id,
             'system_name' => $this->systemName,
@@ -55,7 +69,6 @@ class ScoreLeadJob implements ShouldQueue
         ]);
 
         try {
-            $adapter = $registry->get($this->systemName);
             $result  = $adapter->score(LeadData::from($lead->toArray()));
 
             $job->update([

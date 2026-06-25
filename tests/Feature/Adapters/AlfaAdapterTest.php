@@ -3,26 +3,23 @@
 declare(strict_types=1);
 
 use App\Adapters\AdapterRegistry;
-use App\Data\LeadData;
 use App\Adapters\Configs\AlfaConfig;
 use App\Adapters\Banks\AlfaAdapter;
+use App\Data\LeadData;
 use Illuminate\Support\Facades\Http;
 
 beforeEach(function (): void {
-    // Override the registry with a version that uses a real-looking base url
-    // so Http::fake can match. The fake still intercepts all calls.
     app()->singleton(AdapterRegistry::class, function () {
-        return new class extends AdapterRegistry {
-            public function __construct() {}
-            public function get(string $systemName): \App\Adapters\Contracts\BankAdapter
+        return new class(app(\App\Adapters\ConfigFactory::class)) extends AdapterRegistry {
+            public function get(string $systemName, array $settings = []): \App\Adapters\Contracts\BankAdapter
             {
-                if ($systemName !== 'alfa') {
-                    return parent::get($systemName);
+                if ($systemName === 'alfa') {
+                    return new AlfaAdapter(new AlfaConfig(
+                        apiUrl: 'https://partner.alfabank.ru',
+                        apiKey: 'test-key',
+                    ));
                 }
-                return new AlfaAdapter(new AlfaConfig(
-                    apiUrl: 'https://partner.alfabank.ru',
-                    apiKey: 'test-key',
-                ));
+                return parent::get($systemName, $settings);
             }
         };
     });
