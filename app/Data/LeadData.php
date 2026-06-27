@@ -23,6 +23,7 @@ class LeadData extends Data
 {
     public function __construct(
         public string $inn,
+        public ?int $userId = null,
         public ?string $phone = null,
         public ?string $email = null,
         public ?string $firstName = null,
