@@ -352,51 +352,76 @@ php artisan tinker --execute='dump(app(\App\Scoring\ScoringConfigFactory::class)
 
 ---
 
-## Podman-вариант (если нужен)
+## Podman-вариант
 
-Сейчас в репе нет ни `Containerfile`, ни `podman-compose.yml`.
-Варианты:
+В репе теперь есть полноценный podman-стек:
 
-1. **Подожди следующий коммит** — я добавлю базовый
-   `Containerfile` (php-fpm + extensions) + `podman-compose.yml`
-   (app, nginx, mysql, redis, horizon, scheduler). Это
-   стандартная схема, я подсмотрю в наш TellFax-овский
-   `docker-compose.yml` и адаптирую.
-2. **Сделай свой** — минимальный `Containerfile` это примерно
-   15 строк на базе `docker.io/library/php:8.3-fpm-bookworm` плюс
-   `apt install` нужных расширений и `composer install` в build
-   stage. multi-stage build даст ~250 MB финальный образ.
+```
+containers/Containerfile       # multi-stage build, ~800 MB
+containers/php.ini             # PHP overrides
+containers/nginx.conf          # reverse proxy, fastcgi → app:9000
+containers/entrypoint.sh       # wait for db+redis, migrate, exec
+containers/scheduler-loop.sh   # schedule:run в цикле
+podman-compose.yml             # 6 сервисов: mysql, redis, app, nginx, horizon, scheduler
+.env.docker                    # дев-defaults (без секретов)
+.dockerignore                  # что не тащим в build context
+package-lock.json              # для npm ci (сгенерирован)
+```
 
-### Разница Podman vs Docker (на что обратить внимание)
+**Запуск:**
 
-| Docker                            | Podman                                        |
-|-----------------------------------|-----------------------------------------------|
-| `docker compose`                  | `podman-compose` (отдельный пакет)            |
-| Daemon (`dockerd`)                | Нет демона, форкается CLI                     |
-| `docker0` bridge                  | `slirp4netns` / `netavark` (rootless по умолчанию) |
-| `docker exec -it ... bash`        | `podman exec -it ... bash`                    |
-| `docker compose logs -f`          | `podman-compose logs -f`                      |
-| Volumes perms — `1000:1000`       | `--userns=keep-id` или `--uidmap`             |
-| `DOCKER_HOST` env                 | Нет аналога, сокет через XDG_RUNTIME_DIR      |
+```bash
+podman-compose up -d --build
+podman-compose exec app php artisan make:filament-user   # первый админ
+open http://localhost:8080/admin
+```
 
-Самые частые грабли при переходе:
+Дальше:
 
-- **Сокеты на хосте.** Podman по умолчанию слушает сокет
-  `$XDG_RUNTIME_DIR/podman/podman.sock`. Убедись, что
-  переменная экспортирована:
-  `export XDG_RUNTIME_DIR=/run/user/$(id -u)`.
-- **UID-маппинг в volume.** Если в compose указан
-  `./src:/app:z` (relabel SELinux), в rootless podman это
-  не нужно, но маппинг UID в контейнере и на хосте должен
-  совпадать, иначе будешь ловить "permission denied" на
-  `storage/` и `bootstrap/cache/`. Либо `--userns=keep-id`
-  для bind-mount в dev, либо фиксированный UID в образе.
-- **Нет daemon'а = `docker-compose` build watch не работает.**
-  Для dev hot-reload используй `podman compose watch` (4.5+)
-  или просто пересобирай руками.
-- **Сеть.** `slirp4netns` медленнее `docker0`. Для dev ОК,
-  в проде лучше `--net=host` или netavark bridge.
+- <http://localhost:8080> — приложение
+- <http://localhost:8080/admin> — Filament-панель
+- `podman-compose logs -f horizon` — очередь
+- `podman-compose exec app php artisan test` — тесты (sqlite in-memory, MySQL не нужен)
+- `podman-compose down` — остановить
+- `podman-compose down -v` — остановить и снести volumes (включая MySQL-данные)
 
-Если хочешь podman-путь сразу — скажи, и я добавлю
-`Containerfile` + `podman-compose.yml` отдельным коммитом
-(см. "Подводные камни" выше).
+**Что внутри:**
+
+- `app` (php-fpm) — слушает `0.0.0.0:9000`, доступен по сети `leadflow` как `app:9000`
+- `nginx` (1.27-alpine) — проксирует `:8080` → `app:9000`
+- `horizon` — отдельный контейнер, тот же image, `php artisan horizon`
+- `scheduler` — `schedule:run` в цикле (для прод-крона нужен настоящий cron)
+- `mysql 8.0` + `redis 7-alpine` — отдельные volumes, healthcheck, ждут app
+
+**Особенности Podman (vs Docker):**
+
+- `userns_mode: keep-id` — UID 0 в контейнере маппится на твоего host-пользователя, файлы в bind-mount'ах остаются "твои"
+- `:z` на bind-mount'ах — SELinux relabel, no-op на Ubuntu/Debian
+- Сокет по умолчанию в `$XDG_RUNTIME_DIR/podman/podman.sock` — экспортируй, если что-то не находит
+- Права на сокет: `chmod 660 $XDG_RUNTIME_DIR/podman/podman.sock` если ругается
+- `slirp4netns` медленнее `docker0` — для dev ОК, в проде лучше `--net=host` или netavark bridge
+- Нет daemon'а — `docker compose watch` не работает, используй `podman-compose watch` (4.5+) или пересобирай руками
+
+**Что НЕ работает в этом стеке в проде (только dev):**
+
+- Один replica каждого сервиса (нет HA)
+- 800 MB образ (можно ужать если оставить в финальной стадии только нужные runtime-libs)
+- composer install в build-стадии без dev-deps — тесты в контейнере нужно дозвать `composer install` руками
+- nginx слушает 80, TLS-термирование — снаружи через certbot/reverse proxy
+- Бэкапов MySQL нет (только named volume)
+- Реальные bank API ключи заполняются через Filament (UserConnectResource), не здесь
+
+**Если что-то не поднимается:**
+
+```bash
+podman-compose logs app             # что упало
+podman-compose exec app bash       # зайти внутрь
+podman-compose config              # что podman видит в compose
+podman-compose ps -a               # статус контейнеров
+```
+
+Частые грабли:
+- `_docker/entrypoint.sh not found` — не забыл `chmod +x` (мы коммитим с +x)
+- `package-lock.json not found` — мы его сгенерировали и закоммитили; не удаляй
+- `address already in use` на 8080 — смени `WEB_PORT=9000` (или любой свободный)
+- `permission denied` на bind-mount — `userns_mode: keep-id` в compose уже это лечит; если всё равно, проверь владельца `./`
