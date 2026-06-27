@@ -11,6 +11,8 @@ use App\Data\LeadData;
 use App\Data\ScoreResult;
 use App\Data\SendResult;
 use App\Data\StatusResult;
+use App\Http\BankHttpClient;
+use App\Http\RetryPolicy;
 use Illuminate\Http\Client\PendingRequest;
 use Illuminate\Support\Facades\Http;
 
@@ -24,6 +26,7 @@ class UralAdapter implements BankAdapter
 
     public function __construct(
         private readonly AdapterConfig $config,
+        private readonly BankHttpClient $bankHttp,
     ) {
     }
 
@@ -39,23 +42,42 @@ class UralAdapter implements BankAdapter
 
     public function score(LeadData $lead): ScoreResult
     {
-        $response = $this->http()->post('/api/v1/leads/score', $this->payload($lead));
-        if (! $response->successful()) {
-            return ScoreResult::failed("Ural score HTTP {$response->status()}");
+        $payload = $this->payload($lead);
+        $response = $this->bankHttp->withRetry(
+            method: 'POST',
+            url: '/api/v1/leads/score',
+            systemName: $this->systemName(),
+            policy: RetryPolicy::fromConfig($this->config),
+            action: fn () => $this->makeRequest()->post('/api/v1/leads/score', $payload),
+            payload: $payload,
+        );
+
+        if (! $response->successful) {
+            return ScoreResult::failed($response->failureLabel('Ural score'));
         }
 
-        $body = $response->json();
+        $body = $response->body ?? [];
+        if (! ($body['approved'] ?? false)) {
+            return ScoreResult::rejected((string) ($body['reason'] ?? 'rejected'));
+        }
 
-        return ($body['approved'] ?? false)
-            ? ScoreResult::ok((string) $body['id'])
-            : ScoreResult::rejected((string) ($body['reason'] ?? 'rejected'));
+        return ScoreResult::ok((string) $body['id']);
     }
 
     public function send(LeadData $lead): SendResult
     {
-        $response = $this->http()->post('/api/v1/leads', $this->payload($lead));
-        if (! $response->successful()) {
-            return SendResult::failed("Ural send HTTP {$response->status()}");
+        $payload = $this->payload($lead);
+        $response = $this->bankHttp->withRetry(
+            method: 'POST',
+            url: '/api/v1/leads',
+            systemName: $this->systemName(),
+            policy: RetryPolicy::fromConfig($this->config),
+            action: fn () => $this->makeRequest()->post('/api/v1/leads', $payload),
+            payload: $payload,
+        );
+
+        if (! $response->successful) {
+            return SendResult::failed($response->failureLabel('Ural send'));
         }
 
         return SendResult::ok((string) $response->json('id'));
@@ -63,13 +85,18 @@ class UralAdapter implements BankAdapter
 
     public function checkStatus(string $externalId): StatusResult
     {
-        $response = $this->http()->get("/api/v1/leads/{$externalId}");
-        $body = $response->json() ?? [];
+        $response = $this->bankHttp->withRetry(
+            method: 'GET',
+            url: "/api/v1/leads/{$externalId}",
+            systemName: $this->systemName(),
+            policy: RetryPolicy::fromConfig($this->config),
+            action: fn () => $this->makeRequest()->get("/api/v1/leads/{$externalId}"),
+        );
 
         return new StatusResult(
-            status: (string) ($body['status'] ?? StatusResult::ERROR),
-            message: $body['message'] ?? null,
-            raw: $body,
+            status: (string) ($response->body['status'] ?? StatusResult::ERROR),
+            message: $response->body['message'] ?? null,
+            raw: $response->body ?? [],
         );
     }
 
@@ -85,7 +112,7 @@ class UralAdapter implements BankAdapter
         ];
     }
 
-    private function http(): PendingRequest
+    private function makeRequest(): PendingRequest
     {
         /** @var AdapterConfig&\App\Adapters\Configs\UralConfig $config */
         $config = $this->config;

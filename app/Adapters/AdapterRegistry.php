@@ -62,7 +62,9 @@ class AdapterRegistry
         $settings = $settings !== [] ? $settings : ['system_name' => $systemName];
         $config = $this->configFactory->fromArray($settings);
 
-        return new $class($config);
+        // Resolve via the container so the adapter's other constructor
+        // args (BankHttpClient, ...) get injected automatically.
+        return app($class, ['config' => $config]);
     }
 
     /**

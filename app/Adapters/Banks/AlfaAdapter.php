@@ -11,6 +11,8 @@ use App\Data\LeadData;
 use App\Data\ScoreResult;
 use App\Data\SendResult;
 use App\Data\StatusResult;
+use App\Http\BankHttpClient;
+use App\Http\RetryPolicy;
 use Illuminate\Http\Client\PendingRequest;
 use Illuminate\Support\Facades\Http;
 
@@ -19,7 +21,8 @@ use Illuminate\Support\Facades\Http;
  *
  * Score + send + checkStatus on a single REST endpoint with bearer-token auth.
  * Adapter is intentionally thin: the only logic specific to the bank is the
- * request shape and the response parsing.
+ * request shape and the response parsing. All retry/backoff/alerting
+ * goes through `BankHttpClient`.
  */
 class AlfaAdapter implements BankAdapter
 {
@@ -27,6 +30,7 @@ class AlfaAdapter implements BankAdapter
 
     public function __construct(
         private readonly AdapterConfig $config,
+        private readonly BankHttpClient $bankHttp,
     ) {
     }
 
@@ -42,23 +46,49 @@ class AlfaAdapter implements BankAdapter
 
     public function score(LeadData $lead): ScoreResult
     {
-        $response = $this->http()->post('/api/v1/leads/score', $this->payload($lead));
-        if (! $response->successful()) {
-            return ScoreResult::failed("Alfa score HTTP {$response->status()}");
+        $this->assertConfigured();
+        $payload = $this->payload($lead);
+
+        $response = $this->bankHttp->withRetry(
+            method: 'POST',
+            url: '/api/v1/leads/score',
+            systemName: $this->systemName(),
+            policy: RetryPolicy::fromConfig($this->config),
+            action: fn () => $this->makeRequest()->post('/api/v1/leads/score', $payload),
+            payload: $payload,
+        );
+
+        if (! $response->successful) {
+            return ScoreResult::failed($response->failureLabel('Alfa score'));
         }
 
-        $body = $response->json();
+        $body = $response->body ?? [];
+        if (! ($body['approved'] ?? false)) {
+            return ScoreResult::rejected((string) ($body['reason'] ?? 'rejected'));
+        }
 
-        return ($body['approved'] ?? false)
-            ? ScoreResult::ok((string) $body['id'], isset($body['score']) ? (float) $body['score'] : null)
-            : ScoreResult::rejected((string) ($body['reason'] ?? 'rejected'));
+        return ScoreResult::ok(
+            (string) $body['id'],
+            isset($body['score']) ? (float) $body['score'] : null,
+        );
     }
 
     public function send(LeadData $lead): SendResult
     {
-        $response = $this->http()->post('/api/v1/leads', $this->payload($lead));
-        if (! $response->successful()) {
-            return SendResult::failed("Alfa send HTTP {$response->status()}");
+        $this->assertConfigured();
+        $payload = $this->payload($lead);
+
+        $response = $this->bankHttp->withRetry(
+            method: 'POST',
+            url: '/api/v1/leads',
+            systemName: $this->systemName(),
+            policy: RetryPolicy::fromConfig($this->config),
+            action: fn () => $this->makeRequest()->post('/api/v1/leads', $payload),
+            payload: $payload,
+        );
+
+        if (! $response->successful) {
+            return SendResult::failed($response->failureLabel('Alfa send'));
         }
 
         return SendResult::ok((string) $response->json('id'));
@@ -66,13 +96,20 @@ class AlfaAdapter implements BankAdapter
 
     public function checkStatus(string $externalId): StatusResult
     {
-        $response = $this->http()->get("/api/v1/leads/{$externalId}");
-        $body = $response->json() ?? [];
+        $this->assertConfigured();
+
+        $response = $this->bankHttp->withRetry(
+            method: 'GET',
+            url: "/api/v1/leads/{$externalId}",
+            systemName: $this->systemName(),
+            policy: RetryPolicy::fromConfig($this->config),
+            action: fn () => $this->makeRequest()->get("/api/v1/leads/{$externalId}"),
+        );
 
         return new StatusResult(
-            status: (string) ($body['status'] ?? StatusResult::ERROR),
-            message: $body['message'] ?? null,
-            raw: $body,
+            status: (string) ($response->body['status'] ?? StatusResult::ERROR),
+            message: $response->body['message'] ?? null,
+            raw: $response->body ?? [],
         );
     }
 
@@ -90,11 +127,10 @@ class AlfaAdapter implements BankAdapter
         ];
     }
 
-    private function http(): PendingRequest
+    private function makeRequest(): PendingRequest
     {
         /** @var AdapterConfig&\App\Adapters\Configs\AlfaConfig $config */
         $config = $this->config;
-        $this->assertConfigured();
 
         return Http::baseUrl($config->apiUrl)
             ->timeout($config->timeoutSeconds)
@@ -104,7 +140,9 @@ class AlfaAdapter implements BankAdapter
 
     private function assertConfigured(): void
     {
-        if ($this->config->apiUrl === '' || $this->config->apiKey === '') {
+        /** @var AdapterConfig&\App\Adapters\Configs\AlfaConfig $config */
+        $config = $this->config;
+        if ($config->apiUrl === '' || $config->apiKey === '') {
             throw new \RuntimeException('AlfaAdapter is not configured (api_url/api_key missing)');
         }
     }

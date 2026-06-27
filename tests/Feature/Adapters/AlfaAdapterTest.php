@@ -14,10 +14,11 @@ beforeEach(function (): void {
             public function get(string $systemName, array $settings = []): \App\Adapters\Contracts\BankAdapter
             {
                 if ($systemName === 'alfa') {
-                    return new AlfaAdapter(new AlfaConfig(
+                    // Resolve via container so BankHttpClient gets injected.
+                    return app(AlfaAdapter::class, ['config' => new AlfaConfig(
                         apiUrl: 'https://partner.alfabank.ru',
                         apiKey: 'test-key',
-                    ));
+                    )]);
                 }
                 return parent::get($systemName, $settings);
             }
@@ -71,5 +72,5 @@ it('reports a transport failure', function (): void {
     $result = $registry->get('alfa')->score(new LeadData(inn: '7707083893'));
 
     expect($result->success)->toBeFalse();
-    expect($result->reason)->toContain('502');
+    expect($result->reason)->toContain('Alfa score HTTP 502');
 });

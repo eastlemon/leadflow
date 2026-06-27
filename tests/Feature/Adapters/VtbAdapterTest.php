@@ -16,12 +16,12 @@ beforeEach(function (): void {
                 if ($systemName !== 'vtb') {
                     return parent::get($systemName, $settings);
                 }
-                return new VtbAdapter(new VtbConfig(
+                return app(VtbAdapter::class, ['config' => new VtbConfig(
                     apiUrl: 'https://gw.api.vtb.ru',
                     authUrl: 'https://open.api.vtb.ru',
                     clientId: 'cid',
                     clientSecret: 'csec',
-                ));
+                )]);
             }
         };
     });

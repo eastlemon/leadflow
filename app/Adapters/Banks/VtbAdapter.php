@@ -11,14 +11,16 @@ use App\Data\LeadData;
 use App\Data\ScoreResult;
 use App\Data\SendResult;
 use App\Data\StatusResult;
+use App\Http\BankHttpClient;
+use App\Http\RetryPolicy;
 use Illuminate\Http\Client\PendingRequest;
-use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Http;
 
 /**
  * ВТБ integration.
  * Auth: OAuth2 client_credentials. Token is cached for 50 minutes
- * (VТБ access tokens are valid for 60 min, refresh a bit early).
+ * (VTB access tokens are valid for 60 min, refresh a bit early).
  */
 class VtbAdapter implements BankAdapter
 {
@@ -26,6 +28,7 @@ class VtbAdapter implements BankAdapter
 
     public function __construct(
         private readonly AdapterConfig $config,
+        private readonly BankHttpClient $bankHttp,
     ) {
     }
 
@@ -41,23 +44,45 @@ class VtbAdapter implements BankAdapter
 
     public function score(LeadData $lead): ScoreResult
     {
-        $response = $this->http()->post('/openapi/smb/lecs/lead-impers/v1/score', $this->payload($lead));
-        if (! $response->successful()) {
-            return ScoreResult::failed("VTB score HTTP {$response->status()}");
+        $payload = $this->payload($lead);
+        $response = $this->bankHttp->withRetry(
+            method: 'POST',
+            url: '/openapi/smb/lecs/lead-impers/v1/score',
+            systemName: $this->systemName(),
+            policy: RetryPolicy::fromConfig($this->config),
+            action: fn () => $this->makeRequest()->post('/openapi/smb/lecs/lead-impers/v1/score', $payload),
+            payload: $payload,
+        );
+
+        if (! $response->successful) {
+            return ScoreResult::failed($response->failureLabel('VTB score'));
         }
 
-        $body = $response->json();
+        $body = $response->body ?? [];
+        if (($body['decision'] ?? 'reject') !== 'approve') {
+            return ScoreResult::rejected((string) ($body['rejectReason'] ?? 'rejected'));
+        }
 
-        return ($body['decision'] ?? 'reject') === 'approve'
-            ? ScoreResult::ok((string) $body['leadId'], isset($body['score']) ? (float) $body['score'] : null)
-            : ScoreResult::rejected((string) ($body['rejectReason'] ?? 'rejected'));
+        return ScoreResult::ok(
+            (string) $body['leadId'],
+            isset($body['score']) ? (float) $body['score'] : null,
+        );
     }
 
     public function send(LeadData $lead): SendResult
     {
-        $response = $this->http()->post('/openapi/smb/lecs/lead-impers/v1/', $this->payload($lead));
-        if (! $response->successful()) {
-            return SendResult::failed("VTB send HTTP {$response->status()}");
+        $payload = $this->payload($lead);
+        $response = $this->bankHttp->withRetry(
+            method: 'POST',
+            url: '/openapi/smb/lecs/lead-impers/v1/',
+            systemName: $this->systemName(),
+            policy: RetryPolicy::fromConfig($this->config),
+            action: fn () => $this->makeRequest()->post('/openapi/smb/lecs/lead-impers/v1/', $payload),
+            payload: $payload,
+        );
+
+        if (! $response->successful) {
+            return SendResult::failed($response->failureLabel('VTB send'));
         }
 
         return SendResult::ok((string) $response->json('leadId'));
@@ -65,13 +90,18 @@ class VtbAdapter implements BankAdapter
 
     public function checkStatus(string $externalId): StatusResult
     {
-        $response = $this->http()->get("/openapi/smb/lecs/lead-impers/v1/{$externalId}");
-        $body = $response->json() ?? [];
+        $response = $this->bankHttp->withRetry(
+            method: 'GET',
+            url: "/openapi/smb/lecs/lead-impers/v1/{$externalId}",
+            systemName: $this->systemName(),
+            policy: RetryPolicy::fromConfig($this->config),
+            action: fn () => $this->makeRequest()->get("/openapi/smb/lecs/lead-impers/v1/{$externalId}"),
+        );
 
         return new StatusResult(
-            status: $this->mapStatus((string) ($body['status'] ?? '')),
-            message: $body['comment'] ?? null,
-            raw: $body,
+            status: $this->mapStatus((string) ($response->body['status'] ?? '')),
+            message: $response->body['comment'] ?? null,
+            raw: $response->body ?? [],
         );
     }
 
@@ -90,20 +120,20 @@ class VtbAdapter implements BankAdapter
     private function payload(LeadData $lead): array
     {
         return [
-            'inn'     => $lead->inn,
-            'phone'   => $lead->phone,
-            'email'   => $lead->email,
-            'firstName'  => $lead->firstName,
-            'lastName'   => $lead->lastName,
-            'middleName' => $lead->middleName,
+            'inn'         => $lead->inn,
+            'phone'       => $lead->phone,
+            'email'       => $lead->email,
+            'firstName'   => $lead->firstName,
+            'lastName'    => $lead->lastName,
+            'middleName'  => $lead->middleName,
             'companyName' => $lead->companyName,
-            'city'    => $lead->city,
-            'region'  => $lead->region,
-            'okved'   => $lead->okved,
+            'city'        => $lead->city,
+            'region'      => $lead->region,
+            'okved'       => $lead->okved,
         ];
     }
 
-    private function http(): PendingRequest
+    private function makeRequest(): PendingRequest
     {
         /** @var AdapterConfig&\App\Adapters\Configs\VtbConfig $config */
         $config = $this->config;

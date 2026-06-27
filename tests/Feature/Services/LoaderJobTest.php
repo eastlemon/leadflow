@@ -33,10 +33,10 @@ beforeEach(function (): void {
                 if ($systemName !== 'alfa') {
                     return null;
                 }
-                return new AlfaAdapter(new AlfaConfig(
+                return app(\App\Adapters\Banks\AlfaAdapter::class, ['config' => new AlfaConfig(
                     apiUrl: 'https://partner.alfabank.ru',
                     apiKey: 'test-key',
-                ));
+                )]);
             }
         };
     });

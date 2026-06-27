@@ -11,21 +11,23 @@ use App\Data\LeadData;
 use App\Data\ScoreResult;
 use App\Data\SendResult;
 use App\Data\StatusResult;
+use App\Http\BankHttpClient;
+use App\Http\RetryPolicy;
 use Illuminate\Http\Client\PendingRequest;
 use Illuminate\Support\Facades\Http;
 
 /**
  * Промсвязьбанк integration.
- * Auth: email+password → bearer token cached for the request lifecycle.
+ * Auth: email+password → bearer token. Token is re-fetched on every
+ * `makeRequest()` call so a retry after expiry starts a fresh session.
  */
 class PsbAdapter implements BankAdapter
 {
     use BankAdapterHelpers;
 
-    private ?string $token = null;
-
     public function __construct(
         private readonly AdapterConfig $config,
+        private readonly BankHttpClient $bankHttp,
     ) {
     }
 
@@ -41,23 +43,42 @@ class PsbAdapter implements BankAdapter
 
     public function score(LeadData $lead): ScoreResult
     {
-        $response = $this->http()->post('/fo/v1.0.0/leads/score', $this->payload($lead));
-        if (! $response->successful()) {
-            return ScoreResult::failed("PSB score HTTP {$response->status()}");
+        $payload = $this->payload($lead);
+        $response = $this->bankHttp->withRetry(
+            method: 'POST',
+            url: '/fo/v1.0.0/leads/score',
+            systemName: $this->systemName(),
+            policy: RetryPolicy::fromConfig($this->config),
+            action: fn () => $this->makeRequest()->post('/fo/v1.0.0/leads/score', $payload),
+            payload: $payload,
+        );
+
+        if (! $response->successful) {
+            return ScoreResult::failed($response->failureLabel('PSB score'));
         }
 
-        $body = $response->json();
+        $body = $response->body ?? [];
+        if (($body['result'] ?? 'reject') !== 'accept') {
+            return ScoreResult::rejected((string) ($body['comment'] ?? 'rejected'));
+        }
 
-        return ($body['result'] ?? 'reject') === 'accept'
-            ? ScoreResult::ok((string) $body['leadId'])
-            : ScoreResult::rejected((string) ($body['comment'] ?? 'rejected'));
+        return ScoreResult::ok((string) $body['leadId']);
     }
 
     public function send(LeadData $lead): SendResult
     {
-        $response = $this->http()->post('/fo/v1.0.0/leads', $this->payload($lead));
-        if (! $response->successful()) {
-            return SendResult::failed("PSB send HTTP {$response->status()}");
+        $payload = $this->payload($lead);
+        $response = $this->bankHttp->withRetry(
+            method: 'POST',
+            url: '/fo/v1.0.0/leads',
+            systemName: $this->systemName(),
+            policy: RetryPolicy::fromConfig($this->config),
+            action: fn () => $this->makeRequest()->post('/fo/v1.0.0/leads', $payload),
+            payload: $payload,
+        );
+
+        if (! $response->successful) {
+            return SendResult::failed($response->failureLabel('PSB send'));
         }
 
         return SendResult::ok((string) $response->json('leadId'));
@@ -65,13 +86,18 @@ class PsbAdapter implements BankAdapter
 
     public function checkStatus(string $externalId): StatusResult
     {
-        $response = $this->http()->get("/fo/v1.0.0/leads/{$externalId}");
-        $body = $response->json() ?? [];
+        $response = $this->bankHttp->withRetry(
+            method: 'GET',
+            url: "/fo/v1.0.0/leads/{$externalId}",
+            systemName: $this->systemName(),
+            policy: RetryPolicy::fromConfig($this->config),
+            action: fn () => $this->makeRequest()->get("/fo/v1.0.0/leads/{$externalId}"),
+        );
 
         return new StatusResult(
-            status: $this->mapStatus((string) ($body['status'] ?? '')),
-            message: $body['comment'] ?? null,
-            raw: $body,
+            status: $this->mapStatus((string) ($response->body['status'] ?? '')),
+            message: $response->body['comment'] ?? null,
+            raw: $response->body ?? [],
         );
     }
 
@@ -90,21 +116,21 @@ class PsbAdapter implements BankAdapter
     private function payload(LeadData $lead): array
     {
         return [
-            'inn'     => $lead->inn,
-            'phone'   => $lead->phone,
-            'name'    => $lead->companyName ?? trim(($lead->lastName ?? '').' '.($lead->firstName ?? '')),
-            'city'    => $lead->city,
+            'inn'   => $lead->inn,
+            'phone' => $lead->phone,
+            'name'  => $lead->companyName ?? trim(($lead->lastName ?? '').' '.($lead->firstName ?? '')),
+            'city'  => $lead->city,
         ];
     }
 
-    private function http(): PendingRequest
+    private function makeRequest(): PendingRequest
     {
         /** @var AdapterConfig&\App\Adapters\Configs\PsbConfig $config */
         $config = $this->config;
 
         return Http::baseUrl($config->apiUrl)
             ->timeout($config->timeoutSeconds)
-            ->withToken($this->token ?? $this->authenticate())
+            ->withToken($this->authenticate())
             ->acceptJson();
     }
 
@@ -121,8 +147,6 @@ class PsbAdapter implements BankAdapter
                 'password' => $config->password,
             ]);
 
-        $this->token = (string) $response->json('access_token');
-
-        return $this->token;
+        return (string) $response->json('access_token');
     }
 }

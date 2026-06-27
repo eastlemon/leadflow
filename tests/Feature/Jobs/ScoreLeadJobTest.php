@@ -26,10 +26,10 @@ beforeEach(function (): void {
                 if ($systemName !== 'alfa') {
                     return null;
                 }
-                return new AlfaAdapter(new AlfaConfig(
+                return app(\App\Adapters\Banks\AlfaAdapter::class, ['config' => new AlfaConfig(
                     apiUrl: 'https://partner.alfabank.ru',
                     apiKey: 'test-key',
-                ));
+                )]);
             }
         };
     });
@@ -126,11 +126,11 @@ it('marks LeadJob as OK with a pre-flight reason when the lead is blacklisted', 
                 if ($systemName !== 'alfa') {
                     return null;
                 }
-                return new AlfaAdapter(new AlfaConfig(
+                return app(\App\Adapters\Banks\AlfaAdapter::class, ['config' => new AlfaConfig(
                     apiUrl: 'https://partner.alfabank.ru',
                     apiKey: 'test-key',
                     scoring: new ScoringConfig(innBlacklist: ['77070']),
-                ));
+                )]);
             }
         };
     });
@@ -180,7 +180,7 @@ it('marks LeadJob as OK with a duplicate reason when the same INN was processed 
                 if ($systemName !== 'psb') {
                     return null;
                 }
-                return new \App\Adapters\Banks\PsbAdapter(new \App\Adapters\Configs\PsbConfig(
+                return app(\App\Adapters\Banks\PsbAdapter::class, ['config' => new \App\Adapters\Configs\PsbConfig(
                     apiUrl: 'https://api.psb.example',
                     email: 'foo@bar',
                     password: 'secret',
@@ -188,7 +188,7 @@ it('marks LeadJob as OK with a duplicate reason when the same INN was processed 
                         innWhitelist: ['77070'],
                         duplicateDays: 7,
                     ),
-                ));
+                )]);
             }
         };
     });
