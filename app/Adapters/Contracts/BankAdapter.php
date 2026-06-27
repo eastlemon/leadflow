@@ -8,6 +8,7 @@ use App\Data\LeadData;
 use App\Data\ScoreResult;
 use App\Data\SendResult;
 use App\Data\StatusResult;
+use App\Scoring\ScoringConfig;
 
 /**
  * Contract every bank integration must implement.
@@ -18,6 +19,12 @@ use App\Data\StatusResult;
  *
  * Implementations are responsible for talking to the bank API,
  * translating wire formats, and reporting structured results.
+ *
+ * `scoringConfig()` exposes the per-bank pre-flight tune so the
+ * `ScoreLeadJob` can run local rules before paying for the bank
+ * score API. The default implementation returns a permissive
+ * config (all rules inactive); adapters that need it inject the
+ * real config from the user's `tune` blob.
  */
 interface BankAdapter
 {
@@ -31,6 +38,13 @@ interface BankAdapter
      * Human-readable label, used in admin UI.
      */
     public function displayName(): string;
+
+    /**
+     * Pre-flight configuration for this bank, parsed from the
+     * user's `tune` JSON. Defaults to permissive when the
+     * adapter doesn't carry a ScoringConfig.
+     */
+    public function scoringConfig(): ScoringConfig;
 
     /**
      * Run a scoring/prequalification pass on the lead.

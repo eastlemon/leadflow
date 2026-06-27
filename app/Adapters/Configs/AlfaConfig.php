@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Adapters\Configs;
 
 use App\Adapters\AdapterConfig;
+use App\Scoring\ScoringConfig;
 
 class AlfaConfig extends AdapterConfig
 {
@@ -15,6 +16,7 @@ class AlfaConfig extends AdapterConfig
         int $timeoutSeconds = 30,
         int $retryAttempts = 3,
         int $retryBackoffSeconds = 5,
+        ?ScoringConfig $scoring = null,
     ) {
         parent::__construct(
             systemName: 'alfa',
@@ -24,6 +26,7 @@ class AlfaConfig extends AdapterConfig
             timeoutSeconds: $timeoutSeconds,
             retryAttempts: $retryAttempts,
             retryBackoffSeconds: $retryBackoffSeconds,
+            scoring: $scoring,
         );
     }
 }

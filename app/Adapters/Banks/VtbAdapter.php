@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Adapters\Banks;
 
 use App\Adapters\AdapterConfig;
+use App\Adapters\BankAdapterHelpers;
 use App\Adapters\Contracts\BankAdapter;
 use App\Data\LeadData;
 use App\Data\ScoreResult;
@@ -21,6 +22,8 @@ use Illuminate\Support\Facades\Cache;
  */
 class VtbAdapter implements BankAdapter
 {
+    use BankAdapterHelpers;
+
     public function __construct(
         private readonly AdapterConfig $config,
     ) {
