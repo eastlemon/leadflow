@@ -1,0 +1,128 @@
+# LeadFlow dev stack — podman-compose.
+#
+# Brings up: MySQL 8, Redis 7, the php-fpm app, nginx, the horizon queue
+# worker, and a scheduler loop. One command and you have the whole app.
+#
+# Usage:
+#   podman-compose up -d --build
+#   podman-compose exec app php artisan make:filament-user   # first admin
+#   open http://localhost:8080/admin
+#
+# Notes:
+#   - Source code is bind-mounted so edits on the host are visible in
+#     the container (app/, config/, resources/, etc.). The image still
+#     ships vendor/ and public/build/ — those are NOT bind-mounted, so
+#     you need to rebuild the image after composer.json / package.json
+#     changes (`podman-compose up -d --build app`).
+#   - storage/ and bootstrap/cache/ are bind-mounted from the host so
+#     you can inspect logs and caches on the host. The entrypoint does
+#     a chmod 777 on first start, so any UID-mapping works.
+#   - userns_mode: keep-id maps the container's root UID to your host
+#     UID, so files written by the container appear owned by you on
+#     the host. Remove it if you run rootful podman and want the
+#     default mapping.
+#   - `:z` on bind-mounts is the SELinux relabel flag. It's a no-op
+#     on non-SELinux systems (Ubuntu, plain Debian), so safe to keep.
+
+name: leadflow
+
+services:
+  mysql:
+    image: docker.io/library/mysql:8.0
+    container_name: leadflow-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-root_secret}
+      MYSQL_DATABASE:      ${DB_DATABASE:-leadflow}
+      MYSQL_USER:          ${DB_USERNAME:-leadflow}
+      MYSQL_PASSWORD:      ${DB_PASSWORD:-leadflow_secret}
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test:
+        - CMD
+        - mysqladmin
+        - ping
+        - -h
+        - 127.0.0.1
+        - -uroot
+        - -p${DB_ROOT_PASSWORD:-root_secret}
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+    networks: [leadflow]
+
+  redis:
+    image: docker.io/library/redis:7-alpine
+    container_name: leadflow-redis
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks: [leadflow]
+
+  app:
+    build:
+      context: .
+      dockerfile: containers/Containerfile
+    image: leadflow-app:dev
+    container_name: leadflow-app
+    restart: unless-stopped
+    env_file: .env.docker
+    environment:
+      RUN_MIGRATIONS: "true"
+    volumes:
+      - ./:/var/www/html:z
+    depends_on:
+      mysql: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    userns_mode: keep-id
+    networks: [leadflow]
+
+  nginx:
+    image: docker.io/library/nginx:1.27-alpine
+    container_name: leadflow-nginx
+    restart: unless-stopped
+    ports:
+      - "${WEB_PORT:-8080}:80"
+    volumes:
+      - ./containers/nginx.conf:/etc/nginx/conf.d/default.conf:ro,z
+    depends_on:
+      app: { condition: service_started }
+    networks: [leadflow]
+
+  horizon:
+    image: leadflow-app:dev
+    container_name: leadflow-horizon
+    restart: unless-stopped
+    env_file: .env.docker
+    command: ["php", "artisan", "horizon"]
+    volumes:
+      - ./:/var/www/html:z
+    depends_on:
+      app: { condition: service_started }
+    userns_mode: keep-id
+    networks: [leadflow]
+
+  scheduler:
+    image: leadflow-app:dev
+    container_name: leadflow-scheduler
+    restart: unless-stopped
+    env_file: .env.docker
+    command: ["scheduler-loop"]
+    volumes:
+      - ./:/var/www/html:z
+    depends_on:
+      app: { condition: service_started }
+    userns_mode: keep-id
+    networks: [leadflow]
+
+volumes:
+  mysql_data:
+
+networks:
+  leadflow:
+    driver: bridge

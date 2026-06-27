@@ -1,0 +1,143 @@
+# syntax=docker/dockerfile:1
+#
+# LeadFlow runtime image — php-fpm + everything Laravel 13 needs.
+# Multi-stage: vendor (php + composer) + frontend (npm) built separately,
+# then a slim runtime layer that just runs php-fpm.
+#
+# Used by all three "app-like" services in podman-compose.yml:
+#   - app       (php-fpm, behind nginx)
+#   - horizon   (php artisan horizon, queue worker)
+#   - scheduler (schedule:run loop)
+#
+# Note on PHP version: Laravel 13's pinned deps (symfony 8.1+) require
+# PHP 8.4+. The vendor stage installs the same PHP version that will run
+# the app so composer can resolve platform requirements correctly.
+#
+# Build context is the project root, so composer.json, package.json,
+# and the source tree are all available.
+
+# ---------------------------------------------------------------------------
+# 1. Vendor stage — php:8.4-cli + composer (same PHP version as runtime).
+# ---------------------------------------------------------------------------
+FROM docker.io/library/php:8.4-cli-bookworm AS vendor
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Runtime libs the extensions need (built here, not in the runtime,
+# because we don't need them in the final image).
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        git unzip \
+        libicu-dev libzip-dev libpng-dev libjpeg-dev libfreetype6-dev libwebp-dev \
+        libonig-dev libxml2-dev libssl-dev \
+    && docker-php-ext-configure gd --with-freetype --with-jpeg --with-webp \
+    && docker-php-ext-install -j"$(nproc)" \
+        bcmath intl mbstring opcache pcntl pdo_mysql sockets zip gd \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install composer.
+COPY --from=docker.io/library/composer:2.7 /usr/bin/composer /usr/bin/composer
+
+WORKDIR /app
+
+# Copy the manifest first so this layer caches when source changes
+# but composer.json / composer.lock don't.
+COPY composer.json composer.lock ./
+RUN composer install \
+        --no-dev \
+        --no-scripts \
+        --no-interaction \
+        --prefer-dist
+
+# Now copy the source and rebuild the autoloader with the real classmap.
+COPY . .
+RUN composer dump-autoload --classmap-authoritative --no-dev
+
+# ---------------------------------------------------------------------------
+# 2. Frontend stage — npm ci + Vite build. Filament ships its assets
+#    through Vite, and we need public/build/ in the runtime image.
+# ---------------------------------------------------------------------------
+FROM docker.io/library/node:20-bookworm-slim AS frontend
+WORKDIR /app
+
+COPY package.json package-lock.json* ./
+RUN npm ci --no-audit --no-fund
+
+# IMPORTANT: `COPY resources/ ./` would copy the *contents* of
+# resources/ (css/, js/, views/) directly into /app/, which breaks
+# vite's relative-path resolution. Use the explicit trailing path.
+COPY resources/ ./resources/
+COPY vite.config.js tailwind.config.* postcss.config.* ./
+RUN npm run build
+
+# ---------------------------------------------------------------------------
+# 3. Runtime stage — php:8.4-fpm-bookworm with all Laravel extensions.
+# ---------------------------------------------------------------------------
+FROM docker.io/library/php:8.4-fpm-bookworm AS runtime
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# System libs needed by the PHP extensions below.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        git unzip default-mysql-client \
+        libicu-dev libzip-dev libpng-dev libjpeg-dev libfreetype6-dev libwebp-dev \
+        libonig-dev libxml2-dev libssl-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# PHP extensions Laravel 13 + this project need:
+#   - bcmath, intl, mbstring, pcntl, opcache, pdo_mysql, sockets, zip, gd
+#   - redis (PECL; not in core)
+#
+# NOTE: We deliberately KEEP the runtime libs (libpng16, libzip4, libonig5,
+# libxml2, libicu74, libssl3, libfreetype6, libjpeg62-turbo, libwebp7) after
+# building — gd.so and zip.so dynamically link against them and will fail
+# to load if we purge. The image is ~50MB larger than it could be; if
+# size becomes an issue, switch to a multi-stage build with the runtime
+# libs in the final stage only.
+RUN apt-get install -y --no-install-recommends \
+        libpng-dev libjpeg-dev libfreetype6-dev libwebp-dev libzip-dev \
+    && docker-php-ext-configure gd --with-freetype --with-jpeg --with-webp \
+    && docker-php-ext-install -j"$(nproc)" \
+        bcmath intl mbstring opcache pcntl pdo_mysql sockets zip gd \
+    && pecl install redis \
+    && docker-php-ext-enable redis \
+    && docker-php-source delete \
+    && apt-get purge -y --auto-remove libpng-dev libjpeg-dev \
+        libfreetype6-dev libwebp-dev libzip-dev
+
+# PHP config — opcache for prod, sane upload size, etc.
+COPY containers/php.ini /usr/local/etc/php/conf.d/zz-leadflow.ini
+
+WORKDIR /var/www/html
+
+# Copy the source tree. .dockerignore keeps vendor/, node_modules/, .env
+# etc out of the build context so this layer is small.
+COPY . /var/www/html
+
+# Overlay vendor/ and public/build/ from the earlier stages.
+COPY --from=vendor  /app/vendor          /var/www/html/vendor
+COPY --from=frontend /app/public/build   /var/www/html/public/build
+
+# Make storage + bootstrap cache writable by php-fpm (www-data).
+# World-writable is fine for dev; in prod lock this down to the
+# specific UID/GID php-fpm runs as.
+RUN mkdir -p \
+        storage/framework/cache/data \
+        storage/framework/sessions \
+        storage/framework/views \
+        storage/logs \
+        bootstrap/cache \
+    && chmod -R 777 storage bootstrap/cache
+
+# Entrypoint waits for MySQL/Redis, runs migrations, then execs the command.
+COPY containers/entrypoint.sh /usr/local/bin/entrypoint
+COPY containers/scheduler-loop.sh /usr/local/bin/scheduler-loop
+RUN chmod +x /usr/local/bin/entrypoint /usr/local/bin/scheduler-loop
+
+EXPOSE 9000
+
+# We deliberately run as root so the entrypoint can chmod storage/ for
+# php-fpm workers. With userns_mode=keep-id in podman-compose, the
+# resulting files appear owned by the host user, so dev hot-reload
+# works without further setup.
+ENTRYPOINT ["/usr/local/bin/entrypoint"]
+CMD ["php-fpm"]
