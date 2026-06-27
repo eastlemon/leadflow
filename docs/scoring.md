@@ -287,4 +287,103 @@ defaults):
 
 The job's `tries` / `backoff` is unrelated to per-request retries —
 that's `BankHttpClient`'s job. The queue retry is for job-level
-exceptions (DB blip, process k
+exceptions (DB blip, process kill), not for HTTP blips.
+
+---
+
+## Adding a new rule
+
+1. Create `app/Scoring/Rules/MyRule.php` implementing
+   `App\Scoring\Contracts\ScoringRule`. Add a `public function check(LeadData, ScoringConfig): ScoringDecision`.
+2. If your rule needs configuration, add a field to
+   `ScoringConfig` and parse it in `fromTune()`.
+3. Add the rule to the bank(s) that should run it in
+   `ScoringConfigFactory::rulesFor()`.
+4. Add a test in `tests/Unit/Scoring/ScoringRulesTest.php`:
+   - rule inactive → PASS
+   - rule active + match → REJECTED with the right code
+   - rule active + no match → PASS
+
+The orchestrator is generic — no changes needed in
+`BankScoringService` or `ScoreLeadJob`.
+
+---
+
+## Adding a new bank
+
+1. Create `app/Adapters/Configs/MyConfig.php` extending
+   `AdapterConfig`, with `systemName: 'my'` and a
+   `displayName`. Add `?ScoringConfig $scoring = null` to the
+   constructor and pass it to `parent::__construct()`.
+2. Create `app/Adapters/Banks/MyAdapter.php` implementing
+   `BankAdapter`. Use the `BankAdapterHelpers` trait so
+   `scoringConfig()` is free.
+3. Register the class in `app/Adapters/AdapterRegistry::MAP`.
+4. Add the `makeMy()` branch in `ConfigFactory` that builds your
+   config from the settings array.
+5. Add a `case 'my' =>` branch in
+   `ScoringConfigFactory::rulesFor()` with the rule list you want.
+6. Tests:
+   - `tests/Unit/Adapters/ConfigFactoryTest.php` — covers
+     `ConfigFactory::fromArray()`.
+   - `tests/Unit/Scoring/ScoringConfigFactoryTest.php` — covers
+     `ScoringConfigFactory::forBank()`.
+   - An adapter test under `tests/Feature/Adapters/`.
+
+---
+
+## Testing
+
+- `tests/Unit/Scoring/ScoringConfigTest.php` — the `fromTune()`
+  parser. Every legacy edge case (dash, empty, string-typed bool,
+  off_days=0).
+- `tests/Unit/Scoring/ScoringRulesTest.php` — one test per
+  rule: inactive, match, no match. The DB-scoped rules
+  (`SkipExistingRule`, `DuplicatePeriodRule`) use
+  `User::factory()->create()` and `DB::table('leads')->insert()`
+  with explicit `created_at` so the cooldown can be exercised.
+- `tests/Unit/Scoring/BankScoringServiceTest.php` — verifies
+  first-fail-wins, the DISABLED short-circuit, and the empty-rules
+  no-op.
+- `tests/Unit/Scoring/ScoringConfigFactoryTest.php` — verifies
+  the per-bank rule composition matches the table above.
+- `tests/Feature/Jobs/ScoreLeadJobTest.php` — two end-to-end
+  cases that **don't** fake `Http::`: a blacklist short-circuits
+  before any HTTP call, and a duplicate-period short-circuits
+  before any HTTP call. If you ever accidentally move the
+  pre-flight *after* the API call, these tests will catch it
+  because the assertion will hang on the missing fake.
+
+Run the scoring slice in isolation:
+
+```bash
+cd /var/www/leadflow
+./vendor/bin/pest tests/Unit/Scoring tests/Feature/Jobs/ScoreLeadJobTest
+```
+
+---
+
+## Common pitfalls
+
+- **The bank whitelist vs blacklist has opposite empty semantics.**
+  An empty blacklist means "nothing blacklisted, allow everything".
+  An empty whitelist means "no whitelist configured, allow
+  everything" too — but for a different reason (inverted
+  semantics). Both rule classes handle the empty case as a no-op.
+- **`off_days = 0` is silently treated as "no cooldown"**, not
+  "cooldown of zero days" (which would block every lead). The
+  `asNullableInt` parser enforces this.
+- **ПСБ and Урал have a whitelist** — if you enable a `tune` for
+  one of them and forget to populate `inn_only`, the bank will
+  reject every lead. That's the same behaviour as TellFax; the
+  scoring config just makes it explicit.
+- **Pre-flight is per-bank.** The same lead can pass Alfa's
+  pre-flight and fail PSB's whitelist — each bank runs its own
+  pipeline independently. The `LeadJob` row per bank carries the
+  per-bank decision.
+- **`$lead->userId` is required for DB-scoped rules.** It comes
+  from `Lead::user_id` and is propagated through `LeadData`.
+  Without a user, `SkipExistingRule` and `DuplicatePeriodRule`
+  match against the global leads table (no tenant filter) — fine
+  for system-level jobs, but watch out if you ever dispatch a job
+  with a lead that has no user.

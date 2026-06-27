@@ -3,6 +3,9 @@
 Domain guides for the parts of the system that aren't obvious from
 the code.
 
+- [`setup.md`](./setup.md) — first-time setup after `git clone`:
+  native install on Ubuntu (протестировано на нашем vdska),
+  Podman-вариант с обзором отличий от Docker.
 - [`scoring.md`](./scoring.md) — bank pre-flight pipeline:
   what rules run before each bank API call, how the per-bank
   pipelines are composed, and how a user enables them via the
