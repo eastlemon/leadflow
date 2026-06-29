@@ -77,32 +77,26 @@ FROM docker.io/library/php:8.4-fpm-bookworm AS runtime
 ENV DEBIAN_FRONTEND=noninteractive
 
 # System libs needed by the PHP extensions below.
+# We install both -dev packages (for compiling extensions) and their runtime
+# deps explicitly — this way apt-get purge --auto-remove won't nuke the
+# .so files gd.so and zip.so link against.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         git unzip default-mysql-client \
         libicu-dev libzip-dev libpng-dev libjpeg-dev libfreetype6-dev libwebp-dev \
         libonig-dev libxml2-dev libssl-dev \
-    && rm -rf /var/lib/apt/lists/*
-
-# PHP extensions Laravel 13 + this project need:
-#   - bcmath, intl, mbstring, pcntl, opcache, pdo_mysql, sockets, zip, gd
-#   - redis (PECL; not in core)
-#
-# NOTE: We deliberately KEEP the runtime libs (libpng16, libzip4, libonig5,
-# libxml2, libicu74, libssl3, libfreetype6, libjpeg62-turbo, libwebp7) after
-# building — gd.so and zip.so dynamically link against them and will fail
-# to load if we purge. The image is ~50MB larger than it could be; if
-# size becomes an issue, switch to a multi-stage build with the runtime
-# libs in the final stage only.
-RUN apt-get install -y --no-install-recommends \
-        libpng-dev libjpeg-dev libfreetype6-dev libwebp-dev libzip-dev \
+        # --- explicit runtime libs (keep these after purge) ---
+        libpng16-16 libzip4t64 libjpeg62-turbo libfreetype6 libwebp7 \
+        libonig5 libxml2 libicu72 \
     && docker-php-ext-configure gd --with-freetype --with-jpeg --with-webp \
     && docker-php-ext-install -j"$(nproc)" \
         bcmath intl mbstring opcache pcntl pdo_mysql sockets zip gd \
     && pecl install redis \
     && docker-php-ext-enable redis \
     && docker-php-source delete \
-    && apt-get purge -y --auto-remove libpng-dev libjpeg-dev \
-        libfreetype6-dev libwebp-dev libzip-dev
+    && apt-get purge -y --auto-remove \
+        libpng-dev libjpeg-dev libfreetype6-dev libwebp-dev libzip-dev \
+        libicu-dev libonig-dev libxml2-dev libssl-dev \
+    && rm -rf /var/lib/apt/lists/*
 
 # PHP config — opcache for prod, sane upload size, etc.
 COPY containers/php.ini /usr/local/etc/php/conf.d/zz-leadflow.ini
