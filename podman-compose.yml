@@ -94,6 +94,7 @@ services:
       - "${WEB_PORT:-8080}:80"
     volumes:
       - ./containers/nginx.conf:/etc/nginx/conf.d/default.conf:ro,z
+      - ./public:/var/www/html/public:z
     depends_on:
       app: { condition: service_started }
     networks: [leadflow]
