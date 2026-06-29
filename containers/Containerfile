@@ -85,7 +85,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libicu-dev libzip-dev libpng-dev libjpeg-dev libfreetype6-dev libwebp-dev \
         libonig-dev libxml2-dev libssl-dev \
         # --- explicit runtime libs (keep these after purge) ---
-        libpng16-16 libzip4t64 libjpeg62-turbo libfreetype6 libwebp7 \
+        # Note: bookworm uses libzip4 (not libzip4t64) and libicu72.
+        libpng16-16 libzip4 libjpeg62-turbo libfreetype6 libwebp7 \
         libonig5 libxml2 libicu72 \
     && docker-php-ext-configure gd --with-freetype --with-jpeg --with-webp \
     && docker-php-ext-install -j"$(nproc)" \
