@@ -3,26 +3,28 @@
 # Brings up: MySQL 8, Redis 7, the php-fpm app, nginx, the horizon queue
 # worker, and a scheduler loop. One command and you have the whole app.
 #
-# Usage:
-#   podman-compose up -d --build
-#   podman-compose exec app php artisan make:filament-user   # first admin
+# Quick start:
+#   cp .env.docker .env                              # copy env template
+#   podman-compose up -d --build                      # build & start everything
+#   podman exec -it leadflow-app php artisan make:filament-user  # create admin
 #   open http://localhost:8080/admin
+#
+# After code changes on the host (bind-mounted):
+#   podman-compose restart app horizon scheduler     # pick up PHP changes
+#   npm run build && podman-compose restart nginx     # pick up asset changes
+#
+# Full rebuild (after composer.json / Containerfile changes):
+#   podman-compose down
+#   podman-compose up -d --build
 #
 # Notes:
 #   - Source code is bind-mounted so edits on the host are visible in
-#     the container (app/, config/, resources/, etc.). The image still
-#     ships vendor/ and public/build/ — those are NOT bind-mounted, so
-#     you need to rebuild the image after composer.json / package.json
-#     changes (`podman-compose up -d --build app`).
-#   - storage/ and bootstrap/cache/ are bind-mounted from the host so
-#     you can inspect logs and caches on the host. The entrypoint does
-#     a chmod 777 on first start, so any UID-mapping works.
+#     the container. vendor/ and public/build/ are NOT bind-mounted,
+#     they come from the image build stages.
+#   - storage/ and bootstrap/cache/ are bind-mounted from the host.
 #   - userns_mode: keep-id maps the container's root UID to your host
-#     UID, so files written by the container appear owned by you on
-#     the host. Remove it if you run rootful podman and want the
-#     default mapping.
-#   - `:z` on bind-mounts is the SELinux relabel flag. It's a no-op
-#     on non-SELinux systems (Ubuntu, plain Debian), so safe to keep.
+#     UID, so files written by the container appear owned by you.
+#   - :z on bind-mounts is the SELinux relabel flag (no-op on Ubuntu/Debian).
 
 name: leadflow
 
@@ -35,9 +37,9 @@ services:
       - "${DB_PORT_MAP:-3306}:3306"
     environment:
       MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-root_secret}
-      MYSQL_DATABASE:      ${DB_DATABASE:-leadflow}
-      MYSQL_USER:          ${DB_USERNAME:-leadflow}
-      MYSQL_PASSWORD:      ${DB_PASSWORD:-leadflow_secret}
+      MYSQL_DATABASE: ${DB_DATABASE:-leadflow}
+      MYSQL_USER: ${DB_USERNAME:-leadflow}
+      MYSQL_PASSWORD: ${DB_PASSWORD:-leadflow_secret}
     volumes:
       - mysql_data:/var/lib/mysql
     healthcheck:
@@ -75,7 +77,7 @@ services:
     image: leadflow-app:dev
     container_name: leadflow-app
     restart: unless-stopped
-    env_file: .env.docker
+    env_file: .env
     environment:
       RUN_MIGRATIONS: "true"
     volumes:
@@ -103,7 +105,7 @@ services:
     image: leadflow-app:dev
     container_name: leadflow-horizon
     restart: unless-stopped
-    env_file: .env.docker
+    env_file: .env
     command: ["php", "artisan", "horizon"]
     volumes:
       - ./:/var/www/html:z
@@ -116,7 +118,7 @@ services:
     image: leadflow-app:dev
     container_name: leadflow-scheduler
     restart: unless-stopped
-    env_file: .env.docker
+    env_file: .env
     command: ["scheduler-loop"]
     volumes:
       - ./:/var/www/html:z

@@ -2,12 +2,10 @@
 # Container entrypoint for LeadFlow php-fpm / horizon / scheduler.
 #
 # - Waits for MySQL and Redis to accept connections.
-# - Ensures storage/ and bootstrap/cache/ are writable
-#   (bind-mounts under podman with userns_mode=keep-id can land
-#   with the wrong host owner; the chmod fixes that).
-# - Runs pending migrations on first start (idempotent — Laravel
-#   skips already-applied ones).
-# - Execs the command from CMD (php-fpm, php artisan horizon, etc.)
+# - Ensures storage/ and bootstrap/cache/ are writable.
+# - Generates APP_KEY if missing (first boot).
+# - Runs pending migrations on first start (idempotent).
+# - Execs the command from CMD (php-fpm, horizon, etc.)
 
 set -e
 
@@ -22,7 +20,7 @@ if [ -n "${DB_HOST:-}" ]; then
     for _ in $(seq 1 60); do
         if mysqladmin ping \
             -h"${DB_HOST}" -P"${DB_PORT:-3306}" \
-            -u"${DB_USERNAME:-root}" -p"${DB_PASSWORD:-}" \
+            -u"${DB_USERNAME:-root}" -p"${DB_PASSWORD:***" \
             --connect-timeout=2 --silent 2>/dev/null
         then
             echo "[entrypoint] MySQL is up."
@@ -42,6 +40,12 @@ if [ -n "${REDIS_HOST:-}" ]; then
         fi
         sleep 1
     done
+fi
+
+# --- Generate APP_KEY if missing -----------------------------------------
+if [ -z "${APP_KEY:-}" ] || [ "${APP_KEY:-}" = "base64:" ]; then
+    echo "[entrypoint] generating APP_KEY..."
+    php artisan key:generate --force
 fi
 
 # --- Optional first-boot migrations --------------------------------------
