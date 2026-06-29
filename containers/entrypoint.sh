@@ -20,7 +20,7 @@ if [ -n "${DB_HOST:-}" ]; then
     for _ in $(seq 1 60); do
         if mysqladmin ping \
             -h"${DB_HOST}" -P"${DB_PORT:-3306}" \
-            -u"${DB_USERNAME:-root}" -p"${DB_PASSWORD:***" \
+            -u"${DB_USERNAME:-root}" "-p${DB_PASSWORD:-root_secret}" \
             --connect-timeout=2 --silent 2>/dev/null
         then
             echo "[entrypoint] MySQL is up."
@@ -52,7 +52,7 @@ fi
 if [ "${RUN_MIGRATIONS:-true}" = "true" ] && [ -n "${DB_HOST:-}" ]; then
     echo "[entrypoint] running migrations..."
     php artisan migrate --force --no-interaction || {
-        echo "[entrypoint] migrate failed (non-fatal — service still starting)"
+        echo "[entrypoint] migrate failed (non-fatal -- service still starting)"
     }
 fi
 
