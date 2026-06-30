@@ -122,4 +122,19 @@ class UralAdapter implements BankAdapter
             ->withHeaders(['X-Api-Key' => $config->apiKey])
             ->acceptJson();
     }
+
+    /** @return array<string, array{type: string, label: string, required?: bool, default?: mixed, hint?: string}> */
+    public static function configSchema(): array
+    {
+        return [
+            'api_url'        => ['type' => 'url',     'label' => 'API URL',         'required' => true],
+            'api_key'        => ['type' => 'password','label' => 'API Key',         'required' => true],
+            'off_days'       => ['type' => 'text',    'label' => 'Off Days Limit',   'hint' => 'Максимальная давность регистрации (дни)'],
+            'inn_only'       => ['type' => 'text',    'label' => 'INN Only',         'hint' => 'Принимать только эти коды региона'],
+            'skip_exist'     => ['type' => 'select',  'label' => 'Skip Existing',    'default' => 'no'],
+            'is_score'       => ['type' => 'select',  'label' => 'Scoring',          'default' => '1'],
+            'send_immediately'=> ['type' => 'select', 'label' => 'Send Immediately','default' => '0'],
+            'delay'          => ['type' => 'text',    'label' => 'Delay',            'hint' => 'Задержка отправки (часы)'],
+        ];
+    }
 }

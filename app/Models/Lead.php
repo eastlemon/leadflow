@@ -15,7 +15,7 @@ class Lead extends Model
     protected $table = 'leads';
 
     protected $fillable = [
-        'user_id', 'inn', 'phone', 'email',
+        'user_id', 'pipeline_id', 'inn', 'phone', 'email',
         'first_name', 'last_name', 'middle_name',
         'company_name', 'city', 'region', 'okved',
         'extra', 'source',
@@ -33,5 +33,10 @@ class Lead extends Model
     public function user(): \Illuminate\Database\Eloquent\Relations\BelongsTo
     {
         return $this->belongsTo(User::class);
+    }
+
+    public function pipeline(): \Illuminate\Database\Eloquent\Relations\BelongsTo
+    {
+        return $this->belongsTo(Pipeline::class);
     }
 }

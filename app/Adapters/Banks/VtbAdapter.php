@@ -162,4 +162,23 @@ class VtbAdapter implements BankAdapter
             return (string) $response->json('access_token', '');
         });
     }
+
+    /** @return array<string, array{type: string, label: string, required?: bool, default?: mixed, hint?: string}> */
+    public static function configSchema(): array
+    {
+        return [
+            'api_url'          => ['type' => 'url',     'label' => 'API URL',            'required' => true],
+            'auth_url'         => ['type' => 'url',     'label' => 'Auth URL',           'required' => true],
+            'client_id'        => ['type' => 'text',    'label' => 'Client ID',          'required' => true],
+            'client_secret'    => ['type' => 'password','label' => 'Client Secret',      'required' => true],
+            'party_uid'        => ['type' => 'text',    'label' => 'Party UID',          'hint' => 'Идентификатор стороны ВТБ'],
+            'city_black_list'  => ['type' => 'text',    'label' => 'City Blacklist',      'hint' => 'Коды городов через запятую'],
+            'off_days'         => ['type' => 'text',    'label' => 'Off Days Limit',      'hint' => 'Максимальная давность регистрации (дни)'],
+            'inn_skip_list'    => ['type' => 'text',    'label' => 'INN Skip List',      'hint' => 'Коды региона через запятую'],
+            'skip_exist'       => ['type' => 'select',  'label' => 'Skip Existing',      'default' => 'no'],
+            'is_score'         => ['type' => 'select',  'label' => 'Scoring',            'default' => '1'],
+            'send_immediately' => ['type' => 'select',  'label' => 'Send Immediately',  'default' => '0'],
+            'delay'            => ['type' => 'text',    'label' => 'Delay',              'hint' => 'Задержка отправки (часы)'],
+        ];
+    }
 }

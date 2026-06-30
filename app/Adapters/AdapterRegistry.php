@@ -5,18 +5,17 @@ declare(strict_types=1);
 namespace App\Adapters;
 
 use App\Adapters\Contracts\BankAdapter;
-use App\Models\UserConnect;
+use App\Models\Pipeline;
+use App\Models\PipelineReceiver;
+use App\Scoring\ScoringConfigFactory;
 use RuntimeException;
 
 /**
  * Explicit, hand-curated map from system_name to adapter class.
  *
- * Replaces the legacy `ServiceCreator` that switched on `sys_name`
- * and returned different objects for the aping/scoring/tf/sk layers.
- * Here every bank is one class, one place to look.
- *
- * Multi-user aware: `getForUser()` reads per-user credentials from
- * `user_connects` so each user uses their own bank API keys.
+ * Multi-pipeline aware: `getForPipeline()` and `allForPipeline()`
+ * build adapters from a PipelineReceiver's `tune` JSON, so the same
+ * bank can have different settings under different pipelines.
  */
 class AdapterRegistry
 {
@@ -47,8 +46,7 @@ class AdapterRegistry
     }
 
     /**
-     * Builds an adapter from an arbitrary settings array.
-     * Used by tests and by environments where no user owns the row yet.
+     * Build an adapter from an arbitrary settings array.
      *
      * @param array<string, mixed> $settings
      */
@@ -62,19 +60,62 @@ class AdapterRegistry
         $settings = $settings !== [] ? $settings : ['system_name' => $systemName];
         $config = $this->configFactory->fromArray($settings);
 
-        // Resolve via the container so the adapter's other constructor
-        // args (BankHttpClient, ...) get injected automatically.
         return app($class, ['config' => $config]);
     }
 
     /**
-     * Builds an adapter with credentials pulled from a specific user's
-     * `user_connects` row. Returns null if the user has no active row
-     * for this bank — callers should skip silently, not throw.
+     * Build an adapter for a specific pipeline receiver.
+     *
+     * The receiver's `tune` JSON provides bank-specific settings
+     * (API URL, credentials, scoring params, etc.) for THIS pipeline.
+     */
+    public function getForReceiver(PipelineReceiver $receiver): BankAdapter
+    {
+        return $this->get($receiver->system_name, array_merge(
+            (array) $receiver->tune,
+            ['system_name' => $receiver->system_name],
+        ));
+    }
+
+    /**
+     * All active adapters for a pipeline (fan-out target list).
+     *
+     * @return array<string, BankAdapter>
+     */
+    public function allForPipeline(Pipeline $pipeline): array
+    {
+        $out = [];
+        foreach ($pipeline->activeReceivers as $receiver) {
+            if ($this->has($receiver->system_name)) {
+                $out[$receiver->system_name] = $this->getForReceiver($receiver);
+            }
+        }
+
+        return $out;
+    }
+
+    /**
+     * System names of all active receivers in a pipeline.
+     *
+     * @return string[]
+     */
+    public function pipelineReceiverNames(Pipeline $pipeline): array
+    {
+        return $pipeline->activeReceivers()
+            ->pluck('system_name')
+            ->values()
+            ->all();
+    }
+
+    /**
+     * Build an adapter with credentials pulled from a specific user's
+     * `user_connects` row. Legacy method — prefer getForPipeline().
+     *
+     * @deprecated Use allForPipeline() instead.
      */
     public function getForUser(int $userId, string $systemName): ?BankAdapter
     {
-        $row = UserConnect::query()
+        $row = \App\Models\UserConnect::query()
             ->where('user_id', $userId)
             ->where('system_name', $systemName)
             ->where('is_active', true)
@@ -91,12 +132,15 @@ class AdapterRegistry
 
     /**
      * All bank keys this user has an active connection for.
+     * Legacy method — prefer allForPipeline().
+     *
+     * @deprecated Use allForPipeline() instead.
      *
      * @return array<string, BankAdapter>
      */
     public function allForUser(int $userId): array
     {
-        $rows = UserConnect::query()
+        $rows = \App\Models\UserConnect::query()
             ->where('user_id', $userId)
             ->where('is_active', true)
             ->get();

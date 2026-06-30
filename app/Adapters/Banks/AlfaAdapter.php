@@ -146,4 +146,20 @@ class AlfaAdapter implements BankAdapter
             throw new \RuntimeException('AlfaAdapter is not configured (api_url/api_key missing)');
         }
     }
+
+    /** @return array<string, array{type: string, label: string, required?: bool, default?: mixed, hint?: string}> */
+    public static function configSchema(): array
+    {
+        return [
+            'api_url'        => ['type' => 'url',     'label' => 'API URL',         'required' => true],
+            'api_key'        => ['type' => 'password','label' => 'API Key',         'required' => true],
+            'adv_code'       => ['type' => 'text',    'label' => 'ADV Code',         'hint' => 'Код рекламного канала'],
+            'inn_skip_list'  => ['type' => 'text',    'label' => 'INN Skip List',   'hint' => 'Список кодов региона через запятую'],
+            'okved_skip_list'=> ['type' => 'text',    'label' => 'OKVED Skip List', 'hint' => 'Список кодов ОКВЭД через запятую'],
+            'skip_exist'     => ['type' => 'select',  'label' => 'Skip Existing',   'default' => 'no', 'hint' => 'Пропускать уже отправленных'],
+            'is_score'       => ['type' => 'select',  'label' => 'Scoring',         'default' => '1'],
+            'send_immediately'=> ['type' => 'select', 'label' => 'Send Immediately','default' => '0'],
+            'delay'          => ['type' => 'text',    'label' => 'Delay',           'hint' => 'Задержка отправки (часы)'],
+        ];
+    }
 }

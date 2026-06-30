@@ -149,4 +149,21 @@ class PsbAdapter implements BankAdapter
 
         return (string) $response->json('access_token');
     }
+
+    /** @return array<string, array{type: string, label: string, required?: bool, default?: mixed, hint?: string}> */
+    public static function configSchema(): array
+    {
+        return [
+            'api_url'        => ['type' => 'url',     'label' => 'API URL',          'required' => true],
+            'email'          => ['type' => 'email',   'label' => 'Email',            'required' => true],
+            'password'       => ['type' => 'password','label' => 'Password',         'required' => true],
+            'off_days'       => ['type' => 'text',    'label' => 'Off Days Limit',   'hint' => 'Максимальная давность регистрации (дни)'],
+            'inn_skip_list'  => ['type' => 'text',    'label' => 'INN Skip List',    'hint' => 'Коды региона через запятую'],
+            'inn_only'       => ['type' => 'text',    'label' => 'INN Only',         'hint' => 'Принимать только эти коды региона'],
+            'skip_exist'     => ['type' => 'select',  'label' => 'Skip Existing',    'default' => 'no'],
+            'is_score'       => ['type' => 'select',  'label' => 'Scoring',          'default' => '1'],
+            'send_immediately'=> ['type' => 'select', 'label' => 'Send Immediately','default' => '0'],
+            'delay'          => ['type' => 'text',    'label' => 'Delay',            'hint' => 'Задержка отправки (часы)'],
+        ];
+    }
 }

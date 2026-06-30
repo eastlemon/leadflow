@@ -61,4 +61,15 @@ interface BankAdapter
      * Check the current status of a previously-sent lead.
      */
     public function checkStatus(string $externalId): StatusResult;
+
+    /**
+     * Schema for the Filament admin form that edits this bank's tune.
+     *
+     * Each key is a field name (matching the JSON key in `tune`),
+     * and the value describes the field type, label, and whether
+     * it's required. The admin UI renders this dynamically.
+     *
+     * @return array<string, array{type: string, label: string, required?: bool, default?: mixed, hint?: string}>
+     */
+    public static function configSchema(): array;
 }
