@@ -11,6 +11,7 @@ use App\Pipelines\ProviderSchemas;
 use BackedEnum;
 use Filament\Forms;
 use Filament\Resources\Resource;
+use Filament\Schemas;
 use Filament\Schemas\Schema;
 use Filament\Tables;
 use Filament\Tables\Table;
@@ -53,7 +54,7 @@ class PipelineResource extends Resource
                     ->label('Активен'),
 
                 // Dynamic provider_config fields based on selected provider.
-                Forms\Components\Section::make('Настройки провайдера')
+                Schemas\Components\Section::make('Настройки провайдера')
                     ->visible(fn (Forms\Get $get) => filled($get('provider')))
                     ->schema(function (Forms\Get $get) {
                         $provider = $get('provider');

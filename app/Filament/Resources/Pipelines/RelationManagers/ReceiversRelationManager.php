@@ -12,6 +12,7 @@ use Filament\Actions\DeleteBulkAction;
 use Filament\Actions\EditAction;
 use Filament\Forms;
 use Filament\Resources\RelationManagers\RelationManager;
+use Filament\Schemas\Components\Section;
 use Filament\Schemas\Schema;
 use Filament\Tables;
 use Filament\Tables\Table;
@@ -47,7 +48,7 @@ class ReceiversRelationManager extends RelationManager
                     ->label('Активен'),
 
                 // Dynamic tune fields based on selected bank.
-                Forms\Components\Section::make('Настройки банка')
+                Schemas\Components\Section::make('Настройки банка')
                     ->visible(fn (Forms\Get $get) => filled($get('system_name')))
                     ->schema(function (Forms\Get $get) {
                         $systemName = $get('system_name');
