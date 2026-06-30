@@ -49,8 +49,8 @@ class ReceiversRelationManager extends RelationManager
 
                 // Dynamic tune fields based on selected bank.
                 Schemas\Components\Section::make('Настройки банка')
-                    ->visible(fn (Forms\Get $get) => filled($get('system_name')))
-                    ->schema(function (Forms\Get $get) {
+                    ->visible(fn (Schemas\Components\Utilities\Get $get) => filled($get('system_name')))
+                    ->schema(function (Schemas\Components\Utilities\Get $get) {
                         $systemName = $get('system_name');
                         if (! $systemName || ! app(AdapterRegistry::class)->has($systemName)) {
                             return [];

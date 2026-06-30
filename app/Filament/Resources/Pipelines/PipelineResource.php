@@ -55,8 +55,8 @@ class PipelineResource extends Resource
 
                 // Dynamic provider_config fields based on selected provider.
                 Schemas\Components\Section::make('Настройки провайдера')
-                    ->visible(fn (Forms\Get $get) => filled($get('provider')))
-                    ->schema(function (Forms\Get $get) {
+                    ->visible(fn (Schemas\Components\Utilities\Get $get) => filled($get('provider')))
+                    ->schema(function (Schemas\Components\Utilities\Get $get) {
                         $provider = $get('provider');
                         if (! $provider) {
                             return [];
